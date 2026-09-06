@@ -1,0 +1,7 @@
+KnowledgeFlow 3.2 于 2026 年第二季度发布。
+
+该版本新增 Manufacturing Copilot，
+主要服务制造业客户。
+
+Manufacturing Copilot 可以辅助企业员工进行
+生产知识查询、设备文档检索和故障知识定位。

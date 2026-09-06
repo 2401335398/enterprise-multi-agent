@@ -1,0 +1,247 @@
+{
+  "base_url": "http://127.0.0.1:8000",
+  "endpoint": "/chat",
+  "timeout_seconds": 120,
+
+  "cases": [
+    {
+      "id": "TC01_RAG_BASIC",
+      "name": "KnowledgeFlow 基础 RAG",
+      "description": "验证 Knowledge Agent、document_search、RAG 和 grounded answer",
+
+      "steps": [
+        {
+          "message": "KnowledgeFlow 3.2 新增了什么功能？"
+        }
+      ],
+
+      "expect": {
+        "task_type_in": [
+          "simple",
+          "complex"
+        ],
+
+        "required_agents": [
+          "knowledge"
+        ],
+
+        "required_skills": [
+          "document_search"
+        ],
+
+        "required_tools": [
+          "document_search"
+        ],
+
+        "required_events": [
+          "workflow_started",
+          "llm_call",
+          "tool_call",
+          "workflow_completed"
+        ],
+
+        "answer_contains_any": [
+          "Manufacturing Copilot",
+          "生产知识查询",
+          "设备文档检索",
+          "故障知识定位"
+        ],
+
+        "max_retries": 0
+      }
+    },
+
+    {
+      "id": "TC02_INTERNAL_STRATEGY",
+      "name": "内部战略知识检索",
+      "description": "验证内部企业知识检索与事实约束",
+
+      "steps": [
+        {
+          "message": "总结公司对 KnowledgeFlow 2026 年的战略方向。"
+        }
+      ],
+
+      "expect": {
+        "required_agents": [
+          "knowledge"
+        ],
+
+        "required_skills": [
+          "document_search"
+        ],
+
+        "required_tools": [
+          "document_search"
+        ],
+
+        "answer_contains_any": [
+          "制造业",
+          "市场覆盖",
+          "KnowledgeFlow"
+        ],
+
+        "max_retries": 0
+      }
+    },
+
+    {
+      "id": "TC03_RESEARCH",
+      "name": "外部 Research",
+      "description": "验证 Research Agent、competitor_research 和 Search Tool",
+
+      "steps": [
+        {
+          "message": "调研企业知识管理领域近期的市场趋势和主要竞争对手。"
+        }
+      ],
+
+      "expect": {
+        "required_agents": [
+          "research"
+        ],
+
+        "required_skills": [
+          "competitor_research"
+        ],
+
+        "required_tools": [
+          "search"
+        ],
+
+        "required_events": [
+          "tool_call",
+          "llm_call"
+        ],
+
+        "max_retries": 0
+      }
+    },
+
+    {
+      "id": "TC04_COMPLEX_DAG",
+      "name": "复杂 Multi-Agent DAG",
+      "description": "核心 Demo：验证 Knowledge 与 Research 并行，Analysis 依赖二者，最终生成报告",
+
+      "steps": [
+        {
+          "message": "结合公司内部资料和外部市场信息，分析 KnowledgeFlow 下一季度的发展机会，并给出优先级建议。"
+        }
+      ],
+
+      "expect": {
+        "task_type_in": [
+          "complex"
+        ],
+
+        "required_agents": [
+          "knowledge",
+          "research",
+          "analysis"
+        ],
+
+        "required_skills": [
+          "document_search",
+          "competitor_research",
+          "synthesis_analysis"
+        ],
+
+        "required_tools": [
+          "document_search",
+          "search"
+        ],
+
+        "required_events": [
+          "workflow_started",
+          "supervisor_completed",
+          "task_started",
+          "task_completed",
+          "scheduler_completed",
+          "workflow_completed"
+        ],
+
+        "min_task_count": 3,
+
+        "require_dependency_task": true,
+
+        "require_parallel_root_tasks": true,
+
+        "max_retries": 0,
+
+        "max_llm_calls": 8,
+
+        "max_input_tokens": 7000,
+
+        "answer_contains_any": [
+          "KnowledgeFlow",
+          "Manufacturing Copilot",
+          "制造业"
+        ]
+      }
+    },
+
+    {
+      "id": "TC05_MEMORY",
+      "name": "Semantic Memory",
+      "description": "验证同一 session 下长期偏好写入和后续使用",
+
+      "reuse_session": true,
+
+      "steps": [
+        {
+          "message": "以后分析 KnowledgeFlow 时，优先关注制造业客户。"
+        },
+        {
+          "message": "分析 KnowledgeFlow 下一季度最值得投入的方向。"
+        }
+      ],
+
+      "expect": {
+        "min_steps": 2,
+
+        "answer_contains_any": [
+          "制造业",
+          "KnowledgeFlow"
+        ],
+
+        "required_events_any": [
+          "memory_fast_path",
+          "llm_call"
+        ]
+      }
+    },
+
+    {
+      "id": "TC06_SYNTHESIS",
+      "name": "证据约束综合分析",
+      "description": "验证多源综合、风险提示和 Evidence Boundary",
+
+      "steps": [
+        {
+          "message": "对比 KnowledgeFlow 的内部优势、外部竞争情况和资源约束，给出三项优先行动建议，并明确指出证据不足的地方。"
+        }
+      ],
+
+      "expect": {
+        "required_agents": [
+          "knowledge",
+          "research",
+          "analysis"
+        ],
+
+        "required_skills": [
+          "synthesis_analysis"
+        ],
+
+        "answer_contains_any": [
+          "证据",
+          "不足",
+          "风险",
+          "KnowledgeFlow"
+        ],
+
+        "max_retries": 0
+      }
+    }
+  ]
+}
