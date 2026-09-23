@@ -1,3 +1,7 @@
+# app/api/chat.py
+
+from __future__ import annotations
+
 import time
 import uuid
 
@@ -25,6 +29,10 @@ from app.observability.tracer import tracer
 
 router = APIRouter()
 
+
+# ============================================================
+# Request / Response Schema
+# ============================================================
 
 class ChatRequest(BaseModel):
     message: str
@@ -69,6 +77,10 @@ class ChatResponse(BaseModel):
     metrics: RuntimeMetricsResponse
 
 
+# ============================================================
+# Chat API
+# ============================================================
+
 @router.post(
     "/chat",
     response_model=ChatResponse,
@@ -76,6 +88,14 @@ class ChatResponse(BaseModel):
 async def chat(
     request: ChatRequest,
 ):
+    print("\n========== CHAT REQUEST RECEIVED ==========")
+    print("message:", request.message)
+    print("session_id:", request.session_id)
+    print("===========================================\n")
+
+    # ========================================================
+    # 1. Workflow / Session Identity
+    # ========================================================
 
     workflow_id = str(
         uuid.uuid4()
@@ -92,6 +112,10 @@ async def chat(
         time.perf_counter()
     )
 
+    # ========================================================
+    # 2. Local Observability Context
+    # ========================================================
+
     obs_context = (
         WorkflowObservabilityContext(
             workflow_id=workflow_id
@@ -105,6 +129,11 @@ async def chat(
     )
 
     try:
+
+        # ====================================================
+        # 3. Workflow Start Trace
+        # ====================================================
+
         tracer.record(
             event_type="workflow_started",
             workflow_id=workflow_id,
@@ -115,9 +144,9 @@ async def chat(
             },
         )
 
-        # ----------------------------------------------------
-        # Historical memory first
-        # ----------------------------------------------------
+        # ====================================================
+        # 4. Historical Memory Retrieval
+        # ====================================================
 
         memory_context = (
             build_memory_context(
@@ -128,9 +157,9 @@ async def chat(
             )
         )
 
-        # ----------------------------------------------------
-        # Store current user message
-        # ----------------------------------------------------
+        # ====================================================
+        # 5. Store Current User Message
+        # ====================================================
 
         memory_manager.add_conversation(
             session_id=session_id,
@@ -138,9 +167,9 @@ async def chat(
             content=request.message,
         )
 
-        # ----------------------------------------------------
-        # Semantic Memory Fast Path
-        # ----------------------------------------------------
+        # ====================================================
+        # 6. Semantic Memory Fast Path
+        # ====================================================
 
         semantic_memory = None
         consolidation_result = None
@@ -152,6 +181,11 @@ async def chat(
         )
 
         if should_process:
+
+            # ------------------------------------------------
+            # Memory Extractor
+            # ------------------------------------------------
+
             obs_context.memory_extractor_calls += 1
 
             semantic_memory = (
@@ -160,7 +194,12 @@ async def chat(
                 )
             )
 
+            # ------------------------------------------------
+            # Memory Consolidation
+            # ------------------------------------------------
+
             if semantic_memory:
+
                 consolidation_result = (
                     await memory_manager
                     .consolidate_semantic_memory(
@@ -171,10 +210,16 @@ async def chat(
                     )
                 )
 
+                # --------------------------------------------
+                # If consolidation itself did not take the
+                # deterministic fast path, count the LLM call.
+                # --------------------------------------------
+
                 if not consolidation_result.get(
                     "fast_path",
                     False,
                 ):
+
                     obs_context.memory_consolidator_calls += 1
 
                 tracer.record(
@@ -206,6 +251,11 @@ async def chat(
                 )
 
         else:
+
+            # ------------------------------------------------
+            # Deterministic Memory Fast Path
+            # ------------------------------------------------
+
             obs_context.memory_fast_path_skips += 1
 
             tracer.record(
@@ -223,11 +273,12 @@ async def chat(
                 "semantic processing."
             )
 
-        # ----------------------------------------------------
-        # Initial LangGraph State
-        # ----------------------------------------------------
+        # ====================================================
+        # 7. Build Initial LangGraph State
+        # ====================================================
 
         initial_state = {
+
             "workflow_id":
                 workflow_id,
 
@@ -292,47 +343,171 @@ async def chat(
                 [],
         }
 
-        # ----------------------------------------------------
-        # Optional Langfuse callback
-        # ----------------------------------------------------
+        # ====================================================
+        # 8. Optional Langfuse Callback
+        # ====================================================
 
         langfuse_handler = (
             get_langfuse_handler()
         )
 
+        print(
+            "[LANGFUSE]",
+            "enabled"
+            if langfuse_handler is not None
+            else "disabled"
+        )
+
+        # ----------------------------------------------------
+        # LangGraph config
+        #
+        # workflow_id is kept as normal LangGraph metadata.
+        #
+        # session_id / tags / workflow metadata are propagated
+        # to Langfuse separately below.
+        # ----------------------------------------------------
+
         graph_config = {
+
             "run_name":
                 "enterprise-multi-agent",
 
             "metadata": {
                 "workflow_id":
                     workflow_id,
-
-                "langfuse_session_id":
-                    session_id,
-
-                "langfuse_tags": [
-                    "enterprise-multi-agent",
-                    "langgraph",
-                ],
             },
         }
 
+
+
+        # ====================================================
+        # 9. Execute Workflow
+        # ====================================================
+
+        # ====================================================
+        # 9. Execute Workflow
+        # ====================================================
+
         if langfuse_handler is not None:
-            graph_config[
-                "callbacks"
-            ] = [
-                langfuse_handler
-            ]
 
-        # ----------------------------------------------------
-        # Execute workflow
-        # ----------------------------------------------------
+            from langfuse import (
+                propagate_attributes,
+            )
 
-        result = await agent_graph.ainvoke(
-            initial_state,
-            config=graph_config,
-        )
+            from app.observability.langfuse_integration import (
+                get_langfuse_client,
+            )
+
+            langfuse_client = (
+                get_langfuse_client()
+            )
+
+            print(
+                "[LANGFUSE] starting root trace:",
+                workflow_id,
+            )
+
+            with (
+                    langfuse_client
+                            .start_as_current_observation(
+                        as_type="span",
+                        name="enterprise-multi-agent",
+                        input={
+                            "message":
+                                request.message,
+                        },
+                        metadata={
+                            "workflow_id":
+                                workflow_id,
+                        },
+                    )
+            ) as root_span:
+
+                with propagate_attributes(
+
+                        session_id=session_id,
+
+                        trace_name=(
+                                "enterprise-multi-agent"
+                        ),
+
+                        tags=[
+                            "enterprise-multi-agent",
+                            "langgraph",
+                            "regression-test",
+                        ],
+
+                        metadata={
+                            "workflow_id":
+                                workflow_id,
+
+                            "application":
+                                "enterprise-multi-agent",
+                        },
+
+                        environment="development",
+
+                ):
+                    result = (
+                        await agent_graph.ainvoke(
+                            initial_state,
+                            config=graph_config,
+                        )
+                    )
+
+                # --------------------------------------------
+                # Update root trace output
+                # --------------------------------------------
+
+                root_span.update(
+                    output={
+                        "status":
+                            result.get(
+                                "status"
+                            ),
+
+                        "task_type":
+                            result.get(
+                                "task_type"
+                            ),
+
+                        "final_answer":
+                            result.get(
+                                "final_answer"
+                            ),
+                    }
+                )
+
+            # --------------------------------------------
+            # TEMPORARY during integration testing.
+            #
+            # Force Langfuse to export immediately so we
+            # don't have to wait for background batching.
+            # Later this can be removed.
+            # --------------------------------------------
+
+            print(
+                "[LANGFUSE] flushing trace..."
+            )
+
+            langfuse_client.flush()
+
+            print(
+                "[LANGFUSE] trace flushed."
+            )
+
+        else:
+
+            result = (
+                await agent_graph.ainvoke(
+                    initial_state,
+                    config=graph_config,
+                )
+            )
+
+        # ====================================================
+        # 10. Workflow Latency
+        # ====================================================
 
         workflow_latency_ms = (
             time.perf_counter()
@@ -346,15 +521,19 @@ async def chat(
             or ""
         )
 
-        # ----------------------------------------------------
-        # Save conversation / episodic memory
-        # ----------------------------------------------------
+        # ====================================================
+        # 11. Save Assistant Conversation Memory
+        # ====================================================
 
         memory_manager.add_conversation(
             session_id=session_id,
             role="assistant",
             content=final_answer,
         )
+
+        # ====================================================
+        # 12. Save Episodic Memory
+        # ====================================================
 
         episode_content = (
             f"User asked: "
@@ -380,6 +559,10 @@ async def chat(
             },
         )
 
+        # ====================================================
+        # 13. Workflow Completed Trace
+        # ====================================================
+
         tracer.record(
             event_type="workflow_completed",
             workflow_id=workflow_id,
@@ -398,6 +581,7 @@ async def chat(
                     result.get(
                         "status"
                     ),
+
                 "task_type":
                     result.get(
                         "task_type"
@@ -405,9 +589,17 @@ async def chat(
             },
         )
 
+        # ====================================================
+        # 14. Export Local Structured Trace
+        # ====================================================
+
         structured_trace = (
             tracer.export()
         )
+
+        # ====================================================
+        # 15. Estimate Cost
+        # ====================================================
 
         estimated_cost = (
             estimate_cost(
@@ -417,11 +609,15 @@ async def chat(
                 output_tokens=(
                     obs_context.output_tokens
                 ),
-
             )
         )
 
+        # ====================================================
+        # 16. Build API Response
+        # ====================================================
+
         response = ChatResponse(
+
             session_id=session_id,
 
             answer=final_answer,
@@ -451,6 +647,7 @@ async def chat(
             ),
 
             metrics=RuntimeMetricsResponse(
+
                 workflow_id=workflow_id,
 
                 latency_ms=round(
@@ -503,7 +700,12 @@ async def chat(
 
         return response
 
+    # ========================================================
+    # 17. Workflow Failure
+    # ========================================================
+
     except Exception as exc:
+
         tracer.record(
             event_type="workflow_failed",
             workflow_id=workflow_id,
@@ -516,7 +718,12 @@ async def chat(
 
         raise
 
+    # ========================================================
+    # 18. Cleanup ContextVar
+    # ========================================================
+
     finally:
+
         reset_observability_context(
             obs_token
         )
