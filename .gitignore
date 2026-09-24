@@ -4,3 +4,11 @@ __pycache__/
 *.pyc
 .idea/
 .vscode/
+# Runtime databases and generated indexes
+data/chroma/
+data/memory_chroma/
+data/memory.db
+
+# Temporary / cache files
+*.log
+.cache/
