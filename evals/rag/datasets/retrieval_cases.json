@@ -1,0 +1,69 @@
+[
+  {
+    "id": "nist_001",
+    "question": "What are the four core functions of the NIST AI RMF?",
+    "expected_document": "nist_ai_rmf_1.0.pdf",
+    "relevant_pages": [8, 25],
+    "expected_section": "5. AI RMF Core",
+    "expected_keywords": [
+      "GOVERN",
+      "MAP",
+      "MEASURE",
+      "MANAGE"
+    ],
+    "question_type": "list"
+  },
+  {
+    "id": "nist_002",
+    "question": "What does risk tolerance mean in the NIST AI RMF?",
+    "expected_document": "nist_ai_rmf_1.0.pdf",
+    "relevant_pages": [12],
+    "expected_section": "1.2.2 Risk Tolerance",
+    "expected_keywords": [
+      "readiness to bear the risk",
+      "objectives",
+      "contextual",
+      "use-case specific"
+    ],
+    "question_type": "definition"
+  },
+  {
+    "id": "nist_003",
+    "question": "Why is the GOVERN function important for AI risk management?",
+    "expected_document": "nist_ai_rmf_1.0.pdf",
+    "relevant_pages": [26, 27],
+    "expected_section": "5.1 Govern",
+    "expected_keywords": [
+      "cross-cutting function",
+      "risk management",
+      "other functions",
+      "governance"
+    ],
+    "question_type": "explanation"
+  },
+  {
+    "id": "nist_004",
+    "question": "What should organizations consider when establishing the context of an AI system under the MAP function?",
+    "expected_document": "nist_ai_rmf_1.0.pdf",
+    "relevant_pages": [30, 31],
+    "expected_section": "5.2 Map",
+    "expected_keywords": [
+      "intended purposes",
+      "beneficial uses",
+      "laws",
+      "norms",
+      "expectations",
+      "deployment"
+    ],
+    "question_type": "specific_section"
+  },
+  {
+    "id": "nist_005",
+    "question": "What specific large language model should an organization use to comply with the NIST AI RMF?",
+    "expected_document": "nist_ai_rmf_1.0.pdf",
+    "relevant_pages": [],
+    "expected_section": null,
+    "expected_keywords": [],
+    "question_type": "negative"
+  }
+]

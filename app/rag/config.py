@@ -10,7 +10,7 @@ PROJECT_ROOT = (
 
 KNOWLEDGE_BASE_DIR = (
     PROJECT_ROOT
-    / "knowledge_base"
+    /"data"/ "knowledge_base"
 )
 
 
