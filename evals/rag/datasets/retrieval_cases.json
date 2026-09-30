@@ -65,5 +65,52 @@
     "expected_section": null,
     "expected_keywords": [],
     "question_type": "negative"
-  }
+  } ,
+  {
+  "id": "nist_006",
+  "question": "What does organizational willingness to bear AI-related risk in pursuit of its objectives refer to?",
+  "expected_document": "nist_ai_rmf_1.0.pdf",
+  "relevant_pages": [12],
+  "expected_section": "1.2.2 Risk Tolerance",
+  "expected_keywords": [
+    "risk tolerance",
+    "readiness to bear the risk",
+    "objectives"
+  ],
+  "question_type": "paraphrase"
+} ,
+  {
+  "id": "nist_007",
+  "question": "Which characteristic does the NIST AI RMF describe as a necessary condition for AI trustworthiness and the foundation for other trustworthiness characteristics?",
+  "expected_document": "nist_ai_rmf_1.0.pdf",
+  "relevant_pages": [17],
+  "expected_section": "3. AI Risks and Trustworthiness",
+  "expected_keywords": [
+    "Valid & Reliable",
+    "necessary condition",
+    "trustworthiness",
+    "base"
+  ],
+  "question_type": "hard_negative"
+} ,
+  {
+  "id": "nist_008",
+  "question": "What considerations does the NIST AI RMF identify when documenting the intended purposes and context of use for an AI system under MAP 1.1?",
+  "expected_document": "nist_ai_rmf_1.0.pdf",
+  "relevant_pages": [31],
+  "expected_section": "MAP 1.1",
+  "expected_keywords": [
+    "intended purposes",
+    "potentially beneficial uses",
+    "context-specific laws",
+    "norms and expectations",
+    "prospective settings",
+    "users",
+    "impacts"
+  ],
+  "question_type": "structure_sensitive"
+}
+
+
+
 ]
