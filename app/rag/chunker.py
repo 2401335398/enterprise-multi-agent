@@ -2,6 +2,23 @@ from app.rag.config import (
     CHUNK_SIZE,
     CHUNK_OVERLAP,
 )
+import hashlib
+
+def generate_chunk_id(
+    document_id: str,
+    chunk_index: int,
+    page: int | None = None,
+) -> str:
+    identity = (
+        f"{document_id}:"
+        f"{page if page is not None else 'none'}:"
+        f"{chunk_index}"
+    )
+
+    return hashlib.sha256(
+        identity.encode("utf-8")
+    ).hexdigest()
+
 
 
 def split_text(
@@ -54,7 +71,7 @@ def chunk_documents(
 
     chunks = []
 
-    chunk_counter = 0
+    # chunk_counter = 0
 
     for document in documents:
 
@@ -76,11 +93,10 @@ def chunk_documents(
                 "chunk_index"
             ] = index
 
-            metadata[
-                "chunk_id"
-            ] = (
-                f"chunk_"
-                f"{chunk_counter}"
+            metadata["chunk_id"] = generate_chunk_id(
+                document_id=metadata["document_id"],
+                page=metadata.get("page"),
+                chunk_index=index,
             )
 
             chunks.append(
@@ -98,6 +114,6 @@ def chunk_documents(
                 }
             )
 
-            chunk_counter += 1
+            # chunk_counter += 1
 
     return chunks
