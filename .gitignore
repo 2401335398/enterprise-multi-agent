@@ -12,3 +12,11 @@ data/memory.db
 # Temporary / cache files
 *.log
 .cache/
+.test-tmp/
+
+# Evaluation run outputs
+evals/agent/results/
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/

@@ -796,10 +796,12 @@ pip install -r requirements.txt
 
 ### Environment
 
-Create `.env`:
+Copy `.env.example` to `.env` and fill in real values:
 
 ```
-DEEPSEEK_API_KEY=your_api_key
+LLM_API_KEY=your_api_key
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-chat
 
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
@@ -809,7 +811,8 @@ LLM_INPUT_COST_PER_1M_USD=0
 LLM_OUTPUT_COST_PER_1M_USD=0
 ```
 
-Do not commit `.env`.
+All secrets are read from the environment — nothing is hardcoded.
+Do not commit `.env` (it is gitignored; `.env.example` is the safe template).
 
 ------
 
@@ -824,6 +827,54 @@ Open:
 ```
 http://127.0.0.1:8000/docs
 ```
+
+------
+
+### Demo Mode (public deployment)
+
+`APP_MODE` selects the runtime profile. It defaults to `dev`, which is the
+original behaviour: no auth, Swagger on, MCP connected.
+
+For anything reachable from the internet, set `APP_MODE=demo`:
+
+| | `dev` | `demo` |
+|---|---|---|
+| Server-side auth | none | `X-API-Key` / `Authorization: Bearer`, else 401 |
+| `/docs`, `/redoc`, `/openapi.json` | enabled | **404** |
+| MCP servers | connected | **never started** (no `npx` subprocess) |
+| Filesystem / shell / calculator tools | per `TOOL_POLICIES` | **hard DENY**, enforced at the executor |
+| Session scope | global | namespaced per principal (`alice:<id>`) |
+| Rate limit / concurrency / token budget | off | enforced per principal and per request |
+
+```
+APP_MODE=demo
+DEMO_API_KEYS=alice:<random-string>,bob:<random-string>
+DEMO_RATE_LIMIT_PER_MINUTE=10
+DEMO_MAX_CONCURRENT_REQUESTS=2
+DEMO_MAX_TOKENS_PER_REQUEST=50000
+DEMO_REQUEST_TIMEOUT_SECONDS=180
+```
+
+Notes:
+
+- `demo` mode with an empty `DEMO_API_KEYS` **refuses to start** (fail closed).
+- Startup logs the active mode (`[APP] mode = ...`). Confirm it on the host —
+  forgetting to set `APP_MODE` silently gives you `dev`.
+- Application-layer keys and Cloudflare Access are complementary, not
+  alternatives. Access gates browsers; API keys gate direct calls that bypass it.
+- Limits are per-process. Keep the demo at a single uvicorn worker, or the
+  effective limit multiplies by the worker count.
+
+------
+
+### Security Tests
+
+```
+python -m pytest tests/security -v
+```
+
+In-process (no server, no LLM, no cost). Covers unauthorized access, session
+cross-reads, dangerous-tool denial, rate/concurrency limits, and the token budget.
 
 ------
 
