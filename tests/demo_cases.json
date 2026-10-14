@@ -1,6 +1,6 @@
 {
   "base_url": "http://127.0.0.1:8000",
-  "endpoint": "/chat",
+  "endpoint": "api/chat",
   "timeout_seconds": 120,
 
   "cases": [
