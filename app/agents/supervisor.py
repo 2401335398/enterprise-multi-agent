@@ -107,6 +107,68 @@ Memory 使用规则：
 """
 
 
+_FOLLOW_UP_FAST_PATH_PATTERNS = (
+    r"^\s*(?:请)?(?:继续|接着|进一步|展开|详细说明|深入分析)",
+    r"^\s*(?:请)?(?:基于|按照)(?:刚才|之前|前面|上文|上述|前述)",
+)
+
+_FRESH_EVIDENCE_PATTERNS = (
+    r"(?:重新|再次|额外|另外)?(?:搜索|检索|查询|查找|调研)",
+    r"(?:最新|新增|新的).{0,8}(?:资料|数据|证据|信息|来源)",
+    r"(?:知识库|内部资料|外部资料|互联网|网络搜索|网页)",
+    r"\b(?:search|research|retrieve|latest|new evidence)\b",
+)
+
+
+def build_contextual_follow_up_plan(
+    state: AgentState,
+) -> dict | None:
+    """Reuse selected history for simple continuations without new evidence."""
+
+    if state.get("context_intent") != "contextual_follow_up":
+        return None
+
+    if not (state.get("agent_context") or "").strip():
+        return None
+
+    query = (state.get("user_query") or "").strip()
+
+    if not any(
+        re.search(pattern, query, re.IGNORECASE)
+        for pattern in _FOLLOW_UP_FAST_PATH_PATTERNS
+    ):
+        return None
+
+    if any(
+        re.search(pattern, query, re.IGNORECASE)
+        for pattern in _FRESH_EVIDENCE_PATTERNS
+    ):
+        return None
+
+    return {
+        "task_type": "analysis",
+        "reasoning": (
+            "当前请求是基于已有对话结果的继续分析，"
+            "无需重复执行知识检索或外部研究。"
+        ),
+        "tasks": [
+            {
+                "id": "T1",
+                "description": (
+                    "基于已选择的历史上下文继续完成当前请求："
+                    f"{query}"
+                ),
+                "agent": "analysis",
+                "depends_on": [],
+                "status": "pending",
+                "retry_count": 0,
+                "result": None,
+                "error": None,
+            }
+        ],
+    }
+
+
 def extract_json(text: str) -> dict:
     """
     尽可能从 LLM 输出中提取 JSON。
@@ -196,37 +258,48 @@ Current User Request:
 {user_query}
 """
 
-    response = await tracked_llm_invoke(
-        [
-            {
-                "role": "system",
-                "content": SUPERVISOR_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": user_content,
-            },
-        ],
-        workflow_id=state.get(
-            "workflow_id"
-        ),
-        agent_name="supervisor",
-        component="supervisor_planning",
+    follow_up_plan = build_contextual_follow_up_plan(
+        state
     )
 
-    print(
-        "\n"
-        "========== SUPERVISOR RAW RESPONSE =========="
-    )
-    print(repr(response.content))
-    print(
-        "============================================="
-        "\n"
-    )
+    if follow_up_plan is not None:
+        data = follow_up_plan
+        print(
+            "[SUPERVISOR] contextual follow-up "
+            "fast path selected."
+        )
+    else:
+        response = await tracked_llm_invoke(
+            [
+                {
+                    "role": "system",
+                    "content": SUPERVISOR_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": user_content,
+                },
+            ],
+            workflow_id=state.get(
+                "workflow_id"
+            ),
+            agent_name="supervisor",
+            component="supervisor_planning",
+        )
 
-    data = extract_json(
-        response.content
-    )
+        print(
+            "\n"
+            "========== SUPERVISOR RAW RESPONSE =========="
+        )
+        print(repr(response.content))
+        print(
+            "============================================="
+            "\n"
+        )
+
+        data = extract_json(
+            response.content
+        )
 
     decision = (
         SupervisorDecision
@@ -254,6 +327,9 @@ Current User Request:
                 decision.task_type,
             "task_count":
                 len(decision.tasks),
+
+            "follow_up_fast_path":
+                follow_up_plan is not None,
         },
     )
 

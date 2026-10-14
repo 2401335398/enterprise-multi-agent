@@ -29,6 +29,8 @@ REPORT_AGENT_PROMPT = """
    rerank score、latency 等系统内部信息。
 8. 输出应简洁、结构清晰，
    避免机械重复已有报告内容。
+9. 历史上下文只用于理解当前请求中的指代与延续关系，
+   不得替代 Specialist Agent 的事实证据。
 """
 
 
@@ -66,6 +68,14 @@ class ReportAgent(BaseAgent):
                 "task_results",
                 {}
             )
+        )
+
+        agent_context = (
+            state.get(
+                "agent_context",
+                "",
+            )
+            or ""
         )
 
         # ====================================================
@@ -189,6 +199,9 @@ class ReportAgent(BaseAgent):
 {user_query}
 
 
+{agent_context}
+
+
 以下是 Analysis Agent 已完成的综合分析结果：
 
 ================ ANALYSIS RESULT ================
@@ -255,6 +268,9 @@ class ReportAgent(BaseAgent):
 用户原始问题：
 
 {user_query}
+
+
+{agent_context}
 
 
 以下是各 Specialist Agent 的最终业务结果：

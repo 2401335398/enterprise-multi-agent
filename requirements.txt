@@ -7,3 +7,7 @@ python-dotenv
 langchain
 langchain-openai
 langgraph
+
+# 测试依赖（venv 里本来就有，这里补上声明）
+pytest
+httpx

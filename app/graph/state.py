@@ -51,5 +51,7 @@ class AgentState(TypedDict):
 
     session_id: str
     memory_context: str
+    context_intent: str
+    agent_context: str
 
 

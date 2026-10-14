@@ -338,6 +338,20 @@ class KnowledgeAgent(BaseAgent):
             or original_query
         )
 
+        agent_context = (
+            state.get(
+                "agent_context",
+                "",
+            )
+            or ""
+        )
+
+        context_section = (
+            f"\n\n{agent_context}\n"
+            if agent_context
+            else ""
+        )
+
         # ====================================================
         # 7. 没有检索到有效证据
         # ====================================================
@@ -379,6 +393,8 @@ class KnowledgeAgent(BaseAgent):
 
 {state["user_query"]}
 
+{context_section}
+
 
 当前 Task：
 
@@ -414,6 +430,7 @@ Query Rewrite 后的检索问题：
 4. 如果 Evidence 只能支持部分结论，只回答能够被证据支持的部分。
 5. 如果 Evidence 不足，明确说明证据不足。
 6. 不要输出检索分数、RRF、Embedding、Reranker 等内部技术信息。
+7. 历史上下文只用于理解指代，不能替代 Evidence 作为企业事实依据。
 """
 
         # ====================================================

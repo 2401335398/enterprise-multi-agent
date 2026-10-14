@@ -2,18 +2,37 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.core.config import settings
+
 from app.graph.workflow import agent_graph
+
+from app.security.auth import (
+    Principal,
+    require_principal,
+)
+from app.security.limits import (
+    get_concurrency_limiter,
+    get_rate_limiter,
+)
+from app.security.session import resolve_session_id
+from app.security.budget import TokenBudgetExceeded
 
 from app.memory.manager import memory_manager
 from app.memory.context import build_memory_context
 from app.memory.extractor import extract_semantic_memory
 from app.memory.router import should_process_memory
+
+from app.context_engineering import (
+    build_context_decision,
+    build_direct_workflow_result,
+)
 
 from app.observability.context import (
     WorkflowObservabilityContext,
@@ -87,6 +106,76 @@ class ChatResponse(BaseModel):
 )
 async def chat(
     request: ChatRequest,
+    principal: Principal = Depends(
+        require_principal
+    ),
+):
+    """
+    演示模式外壳：鉴权 -> 限流 -> 并发闸 -> 请求级超时。
+
+    真正的业务逻辑原封不动在 _chat_impl 里，
+    所以规划 / DAG 调度 / RAG / Memory 一行都没改。
+    """
+
+    # ---- 服务端限流（按 principal，超限 429）----
+    get_rate_limiter().check(
+        principal.name
+    )
+
+    # ---- 全局并发闸（不排队，满了直接 429）----
+    await (
+        get_concurrency_limiter()
+        .acquire()
+    )
+
+    try:
+
+        if settings.is_demo:
+
+            try:
+
+                async with asyncio.timeout(
+                    settings
+                    .demo_request_timeout_seconds
+                ):
+
+                    return await _chat_impl(
+                        request,
+                        principal,
+                    )
+
+            except TimeoutError:
+
+                raise HTTPException(
+                    status_code=504,
+                    detail=(
+                        "Request timed out."
+                    ),
+                ) from None
+
+            except TokenBudgetExceeded as exc:
+
+                raise HTTPException(
+                    status_code=429,
+                    detail=str(exc),
+                ) from None
+
+        return await _chat_impl(
+            request,
+            principal,
+        )
+
+    finally:
+
+        await (
+            get_concurrency_limiter()
+            .release()
+        )
+
+
+async def _chat_impl(
+    request: ChatRequest,
+    principal: Principal,
 ):
     print("\n========== CHAT REQUEST RECEIVED ==========")
     print("message:", request.message)
@@ -101,11 +190,11 @@ async def chat(
         uuid.uuid4()
     )
 
-    session_id = (
-        request.session_id
-        or str(
-            uuid.uuid4()
-        )
+    # 演示模式下把 session 收敛到 principal 的命名空间里，
+    # 跨用户读会话在结构上就不可能（dev 模式与原逻辑逐字一致）。
+    session_id = resolve_session_id(
+        principal,
+        request.session_id,
     )
 
     workflow_started_at = (
@@ -155,6 +244,26 @@ async def chat(
                     request.message
                 ),
             )
+        )
+
+        # Context policy reads the conversation before the current message is
+        # stored, so "what did I just ask" resolves to the previous turn.
+        context_decision = build_context_decision(
+            session_id=session_id,
+            current_query=request.message,
+            memory_context=memory_context,
+        )
+
+        tracer.record(
+            event_type="context_selected",
+            workflow_id=workflow_id,
+            success=True,
+            metadata={
+                "intent": context_decision.intent,
+                "reason": context_decision.reason,
+                "direct_answer": context_decision.uses_direct_answer,
+                "agent_context_chars": len(context_decision.agent_context),
+            },
         )
 
         # ====================================================
@@ -297,6 +406,12 @@ async def chat(
             "memory_context":
                 memory_context,
 
+            "context_intent":
+                context_decision.intent,
+
+            "agent_context":
+                context_decision.agent_context,
+
             "total_retries":
                 0,
 
@@ -348,7 +463,9 @@ async def chat(
         # ====================================================
 
         langfuse_handler = (
-            get_langfuse_handler()
+            None
+            if context_decision.uses_direct_answer
+            else get_langfuse_handler()
         )
 
         print(
@@ -388,7 +505,23 @@ async def chat(
         # 9. Execute Workflow
         # ====================================================
 
-        if langfuse_handler is not None:
+        if context_decision.uses_direct_answer:
+
+            result = build_direct_workflow_result(
+                context_decision
+            )
+
+            tracer.record(
+                event_type="context_direct_answer",
+                workflow_id=workflow_id,
+                agent="context",
+                success=True,
+                metadata={
+                    "intent": context_decision.intent,
+                },
+            )
+
+        elif langfuse_handler is not None:
 
             from langfuse import (
                 propagate_attributes,

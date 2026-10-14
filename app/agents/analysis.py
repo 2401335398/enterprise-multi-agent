@@ -45,10 +45,21 @@ class AnalysisAgent(BaseAgent):
             )
         )
 
+        agent_context = (
+            state.get(
+                "agent_context",
+                "",
+            )
+            or ""
+        )
+
         prompt = f"""
 用户总体目标：
 
 {state["user_query"]}
+
+
+{agent_context}
 
 
 当前分析任务：
@@ -73,6 +84,7 @@ Skill 提供的分析上下文：
 1. 如果存在前置任务结果，必须使用。
 2. 不要创造不存在的数据。
 3. 如果证据不足，要明确说明。
+4. 历史上下文用于理解指代，不得覆盖当前请求或证据边界。
 """
 
         response = await tracked_llm_invoke(

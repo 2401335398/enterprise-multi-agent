@@ -48,10 +48,21 @@ class ResearchAgent(BaseAgent):
             )
         )
 
+        agent_context = (
+            state.get(
+                "agent_context",
+                "",
+            )
+            or ""
+        )
+
         prompt = f"""
 用户总体目标：
 
 {state["user_query"]}
+
+
+{agent_context}
 
 
 当前任务：
@@ -77,6 +88,7 @@ Skill 执行结果：
 1. 只处理当前任务。
 2. 不要虚构工具没有提供的信息。
 3. 如果当前工具仍为 Mock 实现，需要明确说明。
+4. 历史上下文只用于理解当前请求，不能当作外部研究证据。
 """
 
         response = await tracked_llm_invoke(
