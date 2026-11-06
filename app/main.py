@@ -1,12 +1,15 @@
 from fastapi import FastAPI
 
 from app.api.chat import router as chat_router
+from app.auth.config import validate_auth_config
+from app.auth.router import router as auth_router
 
 from contextlib import (
     asynccontextmanager,
 )
 
 from app.core.config import settings
+from app.db.session import dispose_database_engine
 
 from app.mcp.manager import (
     mcp_manager,
@@ -33,6 +36,7 @@ async def lifespan(
     # 演示模式必须配好鉴权，否则拒绝启动。
     # 放在最前面：宁可起不来，也不能"以为有保护其实没有"。
     validate_demo_config()
+    validate_auth_config()
 
     print(
         f"[APP] mode = {settings.app_mode}"
@@ -46,9 +50,11 @@ async def lifespan(
             "[MCP] skipped (demo mode)"
         )
 
-        yield
-
-        print("[APP] Shutting down...")
+        try:
+            yield
+        finally:
+            await dispose_database_engine()
+            print("[APP] Shutting down...")
         return
 
     print(
@@ -82,19 +88,19 @@ async def lifespan(
             )
 
     # Application starts serving
-    yield
-
-    # =========================
-    # Shutdown
-    # =========================
-
-    print(
-        "[APP] Shutting down MCP..."
-    )
-
-    await (
-        mcp_manager.disconnect_all()
-    )
+    try:
+        yield
+    finally:
+        # =========================
+        # Shutdown
+        # =========================
+        print(
+            "[APP] Shutting down MCP..."
+        )
+        await (
+            mcp_manager.disconnect_all()
+        )
+        await dispose_database_engine()
 
 
 # 演示/生产模式关闭 Swagger、ReDoc 与 OpenAPI schema。
@@ -125,5 +131,10 @@ async def health():
 
 app.include_router(
     chat_router,
+    prefix="/api"
+)
+
+app.include_router(
+    auth_router,
     prefix="/api"
 )

@@ -764,7 +764,7 @@ enterprise-multi-agent/
 | Sparse Retrieval       | BM25                    |
 | Fusion                 | Reciprocal Rank Fusion  |
 | Reranking              | CrossEncoder            |
-| Memory Storage         | SQLite + ChromaDB       |
+| Memory Storage         | PostgreSQL + ChromaDB   |
 | External Tool Protocol | MCP                     |
 | Observability          | Custom Structured Trace |
 | LLM Observability      | Langfuse                |

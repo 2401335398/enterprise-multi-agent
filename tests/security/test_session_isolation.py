@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from app.memory.context import build_memory_context
@@ -203,41 +204,77 @@ def test_alice_cannot_enter_bobs_namespace(
 
 def test_bob_memory_is_unreadable_from_alices_namespace(
     demo_mode,
+    monkeypatch,
 ):
     from app.memory.manager import memory_manager
-    from app.memory.sqlite_store import memory_store
+
+    class InMemoryRepository:
+        def __init__(self):
+            self.records = []
+
+        async def add(self, record):
+            self.records.append(record)
+            return record
+
+        async def get_session_memories(
+            self, session_id, memory_type=None, limit=None
+        ):
+            records = [
+                record
+                for record in self.records
+                if record.session_id == session_id
+                and (
+                    memory_type is None
+                    or record.memory_type == memory_type
+                )
+            ]
+            return records[-limit:] if limit is not None else records
+
+        async def get_by_ids(
+            self, memory_ids, *, session_id, memory_type
+        ):
+            return [
+                record
+                for record in self.records
+                if record.id in memory_ids
+                and record.session_id == session_id
+                and record.memory_type == memory_type
+            ]
+
+    repository = InMemoryRepository()
+    monkeypatch.setattr(memory_manager, "_repository", repository)
+    monkeypatch.setattr(
+        memory_manager._vector_store,
+        "search",
+        lambda **kwargs: [],
+    )
 
     secret = "BOB_SECRET_TOKEN_9f3a"
 
     bob_id = resolve_session_id(BOB, "shared")
     alice_id = resolve_session_id(ALICE, "shared")
 
-    memory_manager.add_conversation(
-        session_id=bob_id,
-        role="user",
-        content=secret,
-    )
-
-    try:
-
+    async def scenario():
+        await memory_manager.add_conversation(
+            session_id=bob_id,
+            role="user",
+            content=secret,
+        )
         # bob 自己看得见
-        assert secret in build_memory_context(
+        assert secret in await build_memory_context(
             session_id=bob_id,
             current_query=secret,
         )
 
         # alice 用同一个客户端 session_id 找不到任何东西
-        alice_context = build_memory_context(
+        alice_context = await build_memory_context(
             session_id=alice_id,
             current_query=secret,
         )
 
         assert secret not in alice_context
 
-    finally:
-
-        memory_store.clear_session(bob_id)
-        memory_store.clear_session(alice_id)
+    asyncio.run(scenario())
 
 
 def test_raw_session_id_from_before_the_change_hits_nothing(

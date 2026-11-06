@@ -17,8 +17,9 @@
 于是跨用户读取在结构上不可能 —— 无论客户端传什么，
 落到的命名空间一定属于调用者自己。
 
-dev 模式只有 single principal，不需要隔离，因此**完全保持原行为**，
-不加任何前缀。这样既有的评测脚本、清理逻辑、历史记忆都不受影响。
+dev 模式在**没有凭据**时只有 single local principal，不需要隔离，因此
+完全保持原行为，不加任何前缀。这样既有的评测脚本、清理逻辑、历史记忆
+都不受影响。一旦 dev 模式带了用户 JWT，仍然要按用户隔离。
 """
 
 from __future__ import annotations
@@ -67,10 +68,12 @@ def resolve_session_id(
 ) -> str:
     """请求入口统一走这个函数。"""
 
-    if not settings.is_demo:
-        # dev：与改动前逐字一致
+    if principal.auth_method == "local" and not settings.is_demo:
+        # dev 无鉴权：与改动前逐字一致。
         return client_session_id or str(uuid.uuid4())
 
+    # demo API Key 和用户 JWT 都做命名空间隔离。
+    # JWT 即使在 dev 模式下也要隔离，否则登录用户之间可以互相读会话。
     return namespaced_session_id(principal, client_session_id)
 
 

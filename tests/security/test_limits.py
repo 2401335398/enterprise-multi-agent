@@ -212,16 +212,30 @@ def test_concurrency_slot_released_even_on_failure(
     async def boom(state, config=None):
         raise RuntimeError("workflow exploded")
 
+    async def noop(**kwargs):
+        return None
+
+    async def empty_context(**kwargs):
+        return ""
+
+    async def no_recent_conversation(*args, **kwargs):
+        return []
+
     monkeypatch.setattr(
         chat_module.agent_graph, "ainvoke", boom
     )
     monkeypatch.setattr(
         chat_module.memory_manager,
         "add_conversation",
-        lambda **kw: None,
+        noop,
     )
     monkeypatch.setattr(
-        chat_module, "build_memory_context", lambda **kw: ""
+        chat_module, "build_memory_context", empty_context
+    )
+    monkeypatch.setattr(
+        chat_module.memory_manager,
+        "get_recent_conversation",
+        no_recent_conversation,
     )
     monkeypatch.setattr(
         chat_module, "should_process_memory", lambda m: False

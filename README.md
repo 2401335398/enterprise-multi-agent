@@ -728,6 +728,23 @@ enterprise-multi-agent/
 │   │   ├── consolidator.py
 │   │   └── router.py
 │   │
+│   ├── auth/
+│   │   ├── router.py
+│   │   ├── service.py
+│   │   ├── repository.py
+│   │   ├── jwt.py
+│   │   └── passwords.py
+│   │
+│   ├── db/
+│   │   ├── base.py
+│   │   ├── session.py
+│   │   └── models/
+│   │
+│   ├── security/
+│   │   ├── auth.py
+│   │   ├── session.py
+│   │   └── limits.py
+│   │
 │   ├── mcp/
 │   │
 │   ├── observability/
@@ -737,6 +754,12 @@ enterprise-multi-agent/
 │   │   └── langfuse_integration.py
 │   │
 │   └── main.py
+│
+├── alembic/
+│   └── versions/
+│
+├── scripts/
+│   └── create_user.py
 │
 ├── knowledge_base/
 │
@@ -764,7 +787,7 @@ enterprise-multi-agent/
 | Sparse Retrieval       | BM25                    |
 | Fusion                 | Reciprocal Rank Fusion  |
 | Reranking              | CrossEncoder            |
-| Memory Storage         | SQLite + ChromaDB       |
+| Memory Storage         | PostgreSQL + ChromaDB   |
 | External Tool Protocol | MCP                     |
 | Observability          | Custom Structured Trace |
 | LLM Observability      | Langfuse                |
@@ -792,6 +815,16 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
+Start PostgreSQL and apply the schema migration:
+
+```text
+docker compose up -d postgres
+python -m alembic upgrade head
+```
+
+The host-side API uses `DATABASE_URL` from `.env`. The default example points
+to PostgreSQL on `127.0.0.1:5432`. Runtime code never calls `create_all()`.
+
 ------
 
 ### Environment
@@ -802,6 +835,15 @@ Copy `.env.example` to `.env` and fill in real values:
 LLM_API_KEY=your_api_key
 LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
+
+# User authentication. Generate with:
+#   python -c "import secrets; print(secrets.token_urlsafe(64))"
+JWT_SECRET_KEY=replace-with-a-random-64-byte-string
+ACCESS_TOKEN_TTL_SECONDS=900
+REFRESH_TOKEN_TTL_DAYS=7
+REFRESH_TOKEN_DELIVERY=cookie
+REFRESH_TOKEN_COOKIE_SECURE=false
+AUTH_ALLOW_REGISTRATION=true
 
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
@@ -828,6 +870,39 @@ Open:
 http://127.0.0.1:8000/docs
 ```
 
+### Database migrations
+
+```text
+# Upgrade to the newest schema
+python -m alembic upgrade head
+
+# Roll back one revision
+python -m alembic downgrade -1
+
+# Re-apply the revision
+python -m alembic upgrade head
+```
+
+PostgreSQL is the authoritative store for all memory records. Chroma contains
+only the semantic vector index. If a Chroma write fails after the PostgreSQL
+commit, repair the index with:
+
+```text
+python scripts/rebuild_memory_index.py
+```
+
+Run the PostgreSQL-only integration checks against an isolated test database:
+
+```powershell
+docker compose exec postgres createdb -U postgres enterprise_multi_agent_test
+$env:TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/enterprise_multi_agent_test"
+python -m pytest tests/memory tests/auth -v
+```
+
+The migration test intentionally runs `upgrade -> downgrade -> upgrade`; never
+point `TEST_DATABASE_URL` at a database containing data you need. It now covers
+`memory_records`, `users`, and `refresh_tokens`.
+
 ------
 
 ### Demo Mode (public deployment)
@@ -839,11 +914,11 @@ For anything reachable from the internet, set `APP_MODE=demo`:
 
 | | `dev` | `demo` |
 |---|---|---|
-| Server-side auth | none | `X-API-Key` / `Authorization: Bearer`, else 401 |
+| Server-side auth | optional JWT; no credentials = local principal | `X-API-Key` / Bearer API Key / Bearer JWT, else 401 |
 | `/docs`, `/redoc`, `/openapi.json` | enabled | **404** |
 | MCP servers | connected | **never started** (no `npx` subprocess) |
 | Filesystem / shell / calculator tools | per `TOOL_POLICIES` | **hard DENY**, enforced at the executor |
-| Session scope | global | namespaced per principal (`alice:<id>`) |
+| Session scope | global for local; namespaced for JWT (`user:<uuid>:<id>`) | namespaced per principal (`alice:<id>`, `user:<uuid>:<id>`) |
 | Rate limit / concurrency / token budget | off | enforced per principal and per request |
 
 ```
@@ -867,6 +942,113 @@ Notes:
 
 ------
 
+### User Authentication (JWT + Refresh Token)
+
+Registered users authenticate with a short-lived JWT access token plus an
+opaque, rotating refresh token. This is additive: `dev` mode still accepts
+unauthenticated requests as the local principal, and `demo` mode still accepts
+`DEMO_API_KEYS`. `/api/chat` accepts a JWT exactly like an API key, and the
+user's sessions are namespaced as `user:<uuid>:<id>`.
+
+| Endpoint | Auth | Description |
+|---|---|---|
+| `POST /api/auth/register` | none | Create an account (201). Disabled in `demo` unless `AUTH_ALLOW_REGISTRATION=true`. |
+| `POST /api/auth/login` | none | Email + password → access token, refresh token, user. |
+| `POST /api/auth/refresh` | refresh token | Rotate the refresh token, issue a new access token. |
+| `POST /api/auth/logout` | refresh token | Revoke the token family, clear the cookie (204). |
+| `POST /api/auth/logout-all` | Bearer access token | Revoke every refresh token and invalidate existing access tokens (204). |
+| `GET /api/auth/me` | Bearer access token | Current user profile. |
+
+`POST /api/auth/register` example (dev mode):
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"correct-horse-battery-staple"}'
+```
+
+Login with `REFRESH_TOKEN_DELIVERY=body` (CLI, tests, mobile) returns the
+refresh token in the JSON body:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"correct-horse-battery-staple"}'
+```
+
+```json
+{
+  "access_token": "eyJ...",
+  "refresh_token": "rt_...",
+  "token_type": "bearer",
+  "expires_in": 900,
+  "user": {"id": "...", "email": "alice@example.com", "display_name": "alice"}
+}
+```
+
+Then refresh and call the API:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token":"rt_..."}'
+
+curl http://127.0.0.1:8000/api/auth/me \
+  -H "Authorization: Bearer eyJ..."
+```
+
+With `REFRESH_TOKEN_DELIVERY=cookie` (the default, intended for browsers) the
+refresh token is never in the response body. It is set as an `HttpOnly` cookie
+scoped to `/api/auth`, so keep a cookie jar:
+
+```bash
+curl -c cookies.txt -X POST http://127.0.0.1:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"correct-horse-battery-staple"}'
+
+curl -b cookies.txt -c cookies.txt -X POST http://127.0.0.1:8000/api/auth/refresh
+curl -b cookies.txt -X POST http://127.0.0.1:8000/api/auth/logout
+```
+
+Relevant settings:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `JWT_SECRET_KEY` | — | **Required in every mode**; at least 32 bytes. Startup fails fast if it is missing or too short. |
+| `ACCESS_TOKEN_TTL_SECONDS` | `900` | Short by design; refresh instead of extending it. |
+| `REFRESH_TOKEN_TTL_DAYS` | `7` | Sliding lifetime of a token family. |
+| `REFRESH_TOKEN_DELIVERY` | `cookie` | `cookie` (browser) or `body` (CLI/tests). |
+| `REFRESH_TOKEN_COOKIE_SECURE` | `false` | Set `true` behind HTTPS. |
+| `REFRESH_TOKEN_REUSE_GRACE_SECONDS` | `10` | Tolerates concurrent refreshes without treating them as theft. |
+| `AUTH_ALLOW_REGISTRATION` | auto | Defaults to enabled in `dev`, disabled in `demo`. |
+| `PASSWORD_MIN_LENGTH` | `8` | Passwords are hashed with Argon2id. |
+| `PASSWORD_MAX_LENGTH` | `128` | Bounds hashing cost. |
+
+To seed an account without exposing registration:
+
+```text
+python scripts/create_user.py --email alice@example.com --display-name Alice
+```
+
+Security properties:
+
+- Passwords are hashed with Argon2id; unknown emails still run a dummy hash so
+  login timing does not reveal whether an account exists.
+- Refresh tokens are 48 random bytes (`rt_` prefix), stored only as SHA-256
+  hashes. Every refresh rotates the token; the old row points at its successor.
+- Reusing an already-rotated refresh token is treated as theft: the whole token
+  family is revoked and `token_version` is bumped, killing outstanding access
+  tokens too. Concurrent tab refreshes are covered by the grace window.
+- Access tokens carry `sub`, `typ`, `jti`, `iat`, `exp`, `iss`, `aud`, and
+  `ver`; `ver` is compared with `users.token_version`, which `logout-all`
+  increments.
+- Email addresses are normalized (trimmed, lowercased) and unique. Login
+  failures return one generic message for both wrong password and unknown email.
+- Registration is disabled by default in `demo` mode (fail closed for public
+  deployments), and the refresh cookie is `HttpOnly` + `SameSite=Lax`.
+
+---
+
 ### Security Tests
 
 ```
@@ -875,6 +1057,23 @@ python -m pytest tests/security -v
 
 In-process (no server, no LLM, no cost). Covers unauthorized access, session
 cross-reads, dangerous-tool denial, rate/concurrency limits, and the token budget.
+
+Authentication has two layers:
+
+```
+# Unit tests: hashing, JWT encoding/decoding, token generation, config
+# validation. No database required.
+python -m pytest tests/auth/test_passwords.py tests/auth/test_jwt.py \
+  tests/auth/test_tokens.py tests/auth/test_config.py -v
+
+# Integration tests: registration, login, refresh rotation, reuse detection,
+# logout/logout-all, cookie delivery. Requires TEST_DATABASE_URL.
+$env:TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/enterprise_multi_agent_test"
+python -m pytest tests/auth tests/memory -v
+```
+
+Integration tests are skipped (not failed) when `TEST_DATABASE_URL` is unset,
+so the unit suite stays runnable on a laptop without PostgreSQL.
 
 ------
 

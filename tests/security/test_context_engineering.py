@@ -30,20 +30,23 @@ def _turn(role: str, content: str) -> MemoryRecord:
 def test_previous_question_is_answered_from_conversation(monkeypatch):
     from app import context_engineering
 
+    async def recent_conversation(session_id, limit):
+        return [
+            _turn("user", "你是谁"),
+            _turn("assistant", "我是企业智能助手。"),
+        ]
+
     monkeypatch.setattr(
         context_engineering.memory_manager,
         "get_recent_conversation",
-        lambda session_id, limit: [
-            _turn("user", "你是谁"),
-            _turn("assistant", "我是企业智能助手。"),
-        ],
+        recent_conversation,
     )
 
-    decision = build_context_decision(
+    decision = asyncio.run(build_context_decision(
         session_id="alice:s1",
         current_query="我刚刚问了什么？",
         memory_context="Recent Conversation: ...",
-    )
+    ))
 
     assert decision.intent == "conversation_history"
     assert decision.direct_answer == "你刚刚问的是：\n\n> 你是谁"
@@ -53,19 +56,20 @@ def test_previous_question_is_answered_from_conversation(monkeypatch):
 def test_previous_assistant_reply_is_supported(monkeypatch):
     from app import context_engineering
 
+    async def recent_conversation(session_id, limit):
+        return [_turn("assistant", "这是上一条回复。")]
+
     monkeypatch.setattr(
         context_engineering.memory_manager,
         "get_recent_conversation",
-        lambda session_id, limit: [
-            _turn("assistant", "这是上一条回复。"),
-        ],
+        recent_conversation,
     )
 
-    decision = build_context_decision(
+    decision = asyncio.run(build_context_decision(
         session_id="alice:s1",
         current_query="你刚才回复了什么？",
         memory_context="",
-    )
+    ))
 
     assert decision.direct_answer == "我刚刚回复的是：\n\n> 这是上一条回复。"
 
@@ -73,17 +77,20 @@ def test_previous_assistant_reply_is_supported(monkeypatch):
 def test_follow_up_gets_bounded_agent_context(monkeypatch):
     from app import context_engineering
 
+    async def no_recent_conversation(session_id, limit):
+        return []
+
     monkeypatch.setattr(
         context_engineering.memory_manager,
         "get_recent_conversation",
-        lambda session_id, limit: [],
+        no_recent_conversation,
     )
 
-    decision = build_context_decision(
+    decision = asyncio.run(build_context_decision(
         session_id="alice:s1",
         current_query="继续分析刚才的方案",
         memory_context="Recent Conversation:\nuser: 讨论方案 A",
-    )
+    ))
 
     assert decision.intent == "contextual_follow_up"
     assert "讨论方案 A" in decision.agent_context
@@ -93,17 +100,20 @@ def test_follow_up_gets_bounded_agent_context(monkeypatch):
 def test_standalone_request_does_not_broadcast_memory(monkeypatch):
     from app import context_engineering
 
+    async def recent_conversation(session_id, limit):
+        return [_turn("user", "旧问题")]
+
     monkeypatch.setattr(
         context_engineering.memory_manager,
         "get_recent_conversation",
-        lambda session_id, limit: [_turn("user", "旧问题")],
+        recent_conversation,
     )
 
-    decision = build_context_decision(
+    decision = asyncio.run(build_context_decision(
         session_id="alice:s1",
         current_query="检索 KnowledgeFlow 产品资料",
         memory_context="Recent Conversation:\nuser: 旧问题",
-    )
+    ))
 
     assert decision.intent == "standalone"
     assert decision.agent_context == ""
@@ -176,14 +186,17 @@ def test_http_history_fast_path_skips_workflow(
 ):
     from app.api import chat as chat_module
 
-    monkeypatch.setattr(
-        chat_module,
-        "build_context_decision",
-        lambda **kwargs: ContextDecision(
+    async def history_decision(**kwargs):
+        return ContextDecision(
             intent="conversation_history",
             reason="test",
             direct_answer="你刚刚问的是：\n\n> 你是谁",
-        ),
+        )
+
+    monkeypatch.setattr(
+        chat_module,
+        "build_context_decision",
+        history_decision,
     )
 
     async def workflow_must_not_run(state, config=None):
@@ -216,14 +229,17 @@ def test_follow_up_context_reaches_workflow_state(
 ):
     from app.api import chat as chat_module
 
-    monkeypatch.setattr(
-        chat_module,
-        "build_context_decision",
-        lambda **kwargs: ContextDecision(
+    async def follow_up_decision(**kwargs):
+        return ContextDecision(
             intent="contextual_follow_up",
             reason="test",
             agent_context="selected history",
-        ),
+        )
+
+    monkeypatch.setattr(
+        chat_module,
+        "build_context_decision",
+        follow_up_decision,
     )
 
     observed = {}

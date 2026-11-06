@@ -3,13 +3,13 @@ from app.memory.manager import (
 )
 
 
-def build_memory_context(
+async def build_memory_context(
     session_id: str,
     current_query: str,
 ) -> str:
 
     conversation = (
-        memory_manager
+        await memory_manager
         .get_recent_conversation(
             session_id,
             limit=6,
@@ -17,7 +17,7 @@ def build_memory_context(
     )
 
     semantic_memories = (
-        memory_manager
+        await memory_manager
         .search_semantic_memories(
             session_id=session_id,
             query=current_query,
@@ -26,7 +26,7 @@ def build_memory_context(
     )
 
     episodes = (
-        memory_manager
+        await memory_manager
         .get_episodes(
             session_id,
             limit=5,

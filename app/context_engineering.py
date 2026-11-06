@@ -54,7 +54,7 @@ _FOLLOW_UP_PATTERNS = (
 )
 
 
-def build_context_decision(
+async def build_context_decision(
     *,
     session_id: str,
     current_query: str,
@@ -62,7 +62,7 @@ def build_context_decision(
 ) -> ContextDecision:
     """Select context without adding another LLM call."""
 
-    recent = memory_manager.get_recent_conversation(
+    recent = await memory_manager.get_recent_conversation(
         session_id,
         limit=6,
     )

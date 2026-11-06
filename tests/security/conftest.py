@@ -124,9 +124,18 @@ def stub_workflow(monkeypatch):
             "total_retries": 0,
         }
 
-    def fake_add_conversation(session_id, role, content):
+    async def fake_add_conversation(session_id, role, content):
         if role == "user":
             observed["session_ids"].append(session_id)
+
+    async def fake_noop(**kwargs):
+        return None
+
+    async def fake_memory_context(**kwargs):
+        return ""
+
+    async def fake_recent_conversation(*args, **kwargs):
+        return []
 
     monkeypatch.setattr(
         chat_module.agent_graph, "ainvoke", fake_ainvoke
@@ -139,10 +148,15 @@ def stub_workflow(monkeypatch):
     monkeypatch.setattr(
         chat_module.memory_manager,
         "add_episode",
-        lambda **kwargs: None,
+        fake_noop,
     )
     monkeypatch.setattr(
-        chat_module, "build_memory_context", lambda **kwargs: ""
+        chat_module, "build_memory_context", fake_memory_context
+    )
+    monkeypatch.setattr(
+        chat_module.memory_manager,
+        "get_recent_conversation",
+        fake_recent_conversation,
     )
     monkeypatch.setattr(
         chat_module, "should_process_memory", lambda message: False

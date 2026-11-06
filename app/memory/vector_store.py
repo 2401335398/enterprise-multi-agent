@@ -191,6 +191,12 @@ class SemanticMemoryStore:
             ]
         )
 
+    def clear(self) -> None:
+        existing = self.collection.get()
+        memory_ids = existing.get("ids", [])
+        if memory_ids:
+            self.collection.delete(ids=memory_ids)
+
 
 semantic_memory_store = (
     SemanticMemoryStore()

@@ -20,3 +20,6 @@ evals/agent/results/
 # Frontend dependencies and build output
 frontend/node_modules/
 frontend/dist/
+
+docker-data/
+docker-model-cache/

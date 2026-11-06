@@ -47,7 +47,7 @@ class ConversationTurn(BaseModel):
     可选的 Conversation Turn Schema。
 
     目前主要用于类型表达，
-    MemoryStore 实际统一存 MemoryRecord。
+    Repository 实际统一存 MemoryRecord。
     """
 
     role: Literal[

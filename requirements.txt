@@ -3,6 +3,14 @@ uvicorn[standard]
 pydantic
 pydantic-settings
 python-dotenv
+SQLAlchemy[asyncio]>=2.0,<3.0
+asyncpg>=0.29,<1.0
+alembic>=1.13,<2.0
+
+# Authentication
+PyJWT>=2.8,<3.0
+pwdlib[argon2]>=0.2,<1.0
+email-validator>=2.0,<3.0
 
 langchain
 langchain-openai
@@ -10,4 +18,5 @@ langgraph
 
 # 测试依赖（venv 里本来就有，这里补上声明）
 pytest
+pytest-asyncio
 httpx

@@ -1,23 +1,34 @@
 """
-演示模式鉴权。
+鉴权：demo API Key + 用户 JWT。
 
 设计要点：
 
-- dev 模式不做任何校验，返回固定 principal，现有调用方与评测套件完全无感。
-- demo 模式必须带有效 key，否则 401。
-- demo 模式但没配 key —— 拒绝启动。绝不能出现"以为开了演示模式、
+- dev 模式不带凭据时不校验，返回固定 principal，现有调用方与评测套件完全无感。
+- demo 模式必须带有效 API Key 或用户 JWT，否则 401。
+- demo 模式但没配 API Key —— 拒绝启动。绝不能出现"以为开了演示模式、
   其实没有任何保护"的状态，那比不配还危险。
 - key 比较用 secrets.compare_digest，避免时序侧信道。
+- JWT 只携带身份与 token_version；权限留给第 3 步 RBAC。
 """
 
 from __future__ import annotations
 
 import secrets
+import uuid
 from dataclasses import dataclass
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.exceptions import InvalidAccessToken
+from app.auth.jwt import decode_access_token
+from app.auth.repository import UserRepository
 from app.core.config import settings
+from app.db.session import get_db_session
 
 
 @dataclass(frozen=True)
@@ -26,9 +37,23 @@ class Principal:
 
     name: str
 
+    # 用户 JWT 才有 user_id；demo API Key 和 dev local 为 None。
+    user_id: str | None = None
+
+    # local | api_key | jwt
+    auth_method: str = "local"
+
+    # 第 3 步多租户使用，本阶段不落库。
+    tenant_id: str | None = None
+
 
 # dev 模式下所有人共享的身份
-LOCAL_PRINCIPAL = Principal(name="local")
+LOCAL_PRINCIPAL = Principal(
+    name="local",
+    auth_method="local",
+)
+
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class DemoConfigError(RuntimeError):
@@ -76,7 +101,10 @@ def parse_api_keys(raw: str) -> dict[str, Principal]:
                 f"与 {name}）。"
             )
 
-        mapping[key] = Principal(name=name)
+        mapping[key] = Principal(
+            name=name,
+            auth_method="api_key",
+        )
 
     return mapping
 
@@ -128,39 +156,117 @@ def resolve_principal(api_key: str | None) -> Principal | None:
     return None
 
 
+def _unauthorized(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=401,
+        detail=detail,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _looks_like_jwt(token: str) -> bool:
+    return token.count(".") == 2
+
+
+async def _principal_from_access_token(
+    token: str,
+    db: AsyncSession,
+) -> Principal:
+    try:
+        payload = decode_access_token(token)
+    except InvalidAccessToken as exc:
+        raise _unauthorized(str(exc)) from exc
+
+    subject = payload.get("sub")
+    if not isinstance(subject, str):
+        raise _unauthorized("Invalid access token.")
+
+    try:
+        user_id = uuid.UUID(subject)
+        token_version = int(payload.get("ver"))
+    except (TypeError, ValueError, AttributeError):
+        raise _unauthorized("Invalid access token.") from None
+
+    user = await UserRepository(db).get_by_id(user_id)
+
+    if user is None:
+        raise _unauthorized("Invalid access token.")
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="Account is disabled.",
+        )
+
+    if token_version != user.token_version:
+        raise _unauthorized("Access token has been revoked.")
+
+    return Principal(
+        name=f"user:{user.id}",
+        user_id=str(user.id),
+        auth_method="jwt",
+    )
+
+
 async def require_principal(
+    credentials: HTTPAuthorizationCredentials | None = Depends(
+        bearer_scheme
+    ),
     x_api_key: str | None = Header(default=None),
-    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db_session),
 ) -> Principal:
     """
     FastAPI 依赖：解析并校验调用方身份。
 
-    demo 模式支持两种传法：
-      X-API-Key: <key>
-      Authorization: Bearer <key>
+    支持三种凭据，优先级如下：
 
-    后者便于接 Cloudflare Access 的 Service Token 等场景。
+      1. X-API-Key: <key>                 （仅 demo）
+      2. Authorization: Bearer <JWT>      （用户登录）
+      3. Authorization: Bearer <api-key>  （仅 demo，兼容旧用法）
+
+    dev 模式没有凭据时仍返回 LOCAL_PRINCIPAL，保持原有零鉴权行为。
+    demo 模式没有任何有效凭据时 401。
     """
 
-    if not settings.is_demo:
-        return LOCAL_PRINCIPAL
+    if x_api_key:
 
-    api_key = x_api_key
+        if settings.is_demo:
 
-    if not api_key and authorization:
+            principal = resolve_principal(x_api_key)
 
-        scheme, _, token = authorization.partition(" ")
+            if principal is None:
+                raise _unauthorized(
+                    "Missing or invalid API key."
+                )
 
-        if scheme.strip().lower() == "bearer":
-            api_key = token.strip() or None
+            return principal
 
-    principal = resolve_principal(api_key)
+        # dev 模式忽略 X-API-Key，与改动前一致。
 
-    if principal is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Missing or invalid API key.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if credentials is not None:
 
-    return principal
+        token = credentials.credentials
+
+        if _looks_like_jwt(token):
+            return await _principal_from_access_token(
+                token,
+                db,
+            )
+
+        if settings.is_demo:
+
+            principal = resolve_principal(token)
+
+            if principal is None:
+                raise _unauthorized(
+                    "Missing or invalid API key."
+                )
+
+            return principal
+
+        # dev 模式下非 JWT 的 Bearer 值仍然被忽略。
+
+    if settings.is_demo:
+        raise _unauthorized("Missing or invalid API key.")
+
+    return LOCAL_PRINCIPAL

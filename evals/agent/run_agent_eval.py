@@ -25,6 +25,7 @@ judge 默认不影响退出码，除非加 --judge-strict。
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import subprocess
@@ -255,36 +256,43 @@ def judge_failed(result: CaseResult) -> bool:
 # ============================================================
 
 def cleanup_sessions(session_ids: list[str]) -> None:
-    """删除本次 run 产生的记忆记录（SQLite + Chroma）。"""
+    """删除本次 run 产生的 PostgreSQL 记录和 Chroma 向量。"""
 
     if not session_ids:
         return
 
     try:
-        from app.memory.sqlite_store import memory_store
+        from app.memory.postgres_repository import memory_repository
         from app.memory.vector_store import semantic_memory_store
     except Exception:
         return
 
-    removed = 0
-
-    for session_id in session_ids:
-        try:
-            records = memory_store.get_session_memories(session_id)
-        except Exception:
-            continue
-
-        for record in records:
+    async def cleanup() -> int:
+        removed = 0
+        for session_id in session_ids:
             try:
-                semantic_memory_store.delete(record.id)
+                records = await memory_repository.get_session_memories(session_id)
+            except Exception:
+                continue
+
+            for record in records:
+                if record.memory_type != "semantic":
+                    continue
+                try:
+                    await asyncio.to_thread(
+                        semantic_memory_store.delete,
+                        record.id,
+                    )
+                except Exception:
+                    pass
+
+            try:
+                removed += await memory_repository.clear_session(session_id)
             except Exception:
                 pass
+        return removed
 
-        try:
-            memory_store.clear_session(session_id)
-            removed += len(records)
-        except Exception:
-            pass
+    removed = asyncio.run(cleanup())
 
     print(f"[cleanup] 已清理 {removed} 条记忆记录")
 

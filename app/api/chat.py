@@ -238,7 +238,7 @@ async def _chat_impl(
         # ====================================================
 
         memory_context = (
-            build_memory_context(
+            await build_memory_context(
                 session_id=session_id,
                 current_query=(
                     request.message
@@ -248,7 +248,7 @@ async def _chat_impl(
 
         # Context policy reads the conversation before the current message is
         # stored, so "what did I just ask" resolves to the previous turn.
-        context_decision = build_context_decision(
+        context_decision = await build_context_decision(
             session_id=session_id,
             current_query=request.message,
             memory_context=memory_context,
@@ -270,7 +270,7 @@ async def _chat_impl(
         # 5. Store Current User Message
         # ====================================================
 
-        memory_manager.add_conversation(
+        await memory_manager.add_conversation(
             session_id=session_id,
             role="user",
             content=request.message,
@@ -658,7 +658,7 @@ async def _chat_impl(
         # 11. Save Assistant Conversation Memory
         # ====================================================
 
-        memory_manager.add_conversation(
+        await memory_manager.add_conversation(
             session_id=session_id,
             role="assistant",
             content=final_answer,
@@ -677,7 +677,7 @@ async def _chat_impl(
             f"{final_answer[:500]}"
         )
 
-        memory_manager.add_episode(
+        await memory_manager.add_episode(
             session_id=session_id,
             content=episode_content,
             metadata={

@@ -1,0 +1,10 @@
+# The repository's requirements.txt currently omits packages that the
+# RAG and MCP modules import. Add them for this Docker walkthrough.
+-r requirements.txt
+chromadb
+sentence-transformers
+rank-bm25
+jieba
+python-docx
+pypdf
+mcp
